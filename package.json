@@ -1,0 +1,22 @@
+{
+  "name": "friday-jammer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Slack bot that adds Spotify track links from a thread to a collaborative playlist.",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "authorize": "node dist/authorize.js",
+    "diagnose": "node dist/diagnose.js",
+    "tmux-start": "if ps aux | grep '[n]ode dist/index.js' | grep friday-jammer | grep -q .; then echo 'ERROR: friday-jammer already running. Run tmux-stop first.' && exit 1; fi && mkdir -p logs && unset TMUX && tmux new-session -d -s friday-jammer 'node dist/index.js 2>&1 | tee -a logs/tmux-friday-jammer.log'",
+    "tmux-stop": "tmux kill-session -t friday-jammer 2>/dev/null; ps aux | grep '[n]ode dist/index.js' | grep friday-jammer | awk '{print $2}' | xargs kill 2>/dev/null || true",
+    "tmux-bounce": "npm run tmux-stop; sleep 2; npm run tmux-start"
+  },
+  "dependencies": {
+    "@slack/bolt": "3.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "18.19.0",
+    "typescript": "5.3.3"
+  }
+}
