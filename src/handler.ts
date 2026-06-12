@@ -144,5 +144,6 @@ function formatSummary(s: {
 
   const header = `:musical_note: ${target}`;
   const followNote = s.justFollowed ? `\n_Added the playlist to my library so I could contribute to it._` : '';
-  return `${header}\n${parts.join(' · ')}${followNote}`;
+  const pumpUpTheJam = `https://media.tenor.com/yoJ4j5zJURoAAAAM/pump-up-the-jam-jam.gif`;
+  return `${header}\n${parts.join(' · ')}${followNote}${pumpUpTheJam}`;
 }
