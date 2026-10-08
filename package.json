@@ -5,6 +5,9 @@
   "description": "Slack bot that adds Spotify track links from a thread to a collaborative playlist.",
   "scripts": {
     "build": "tsc",
+    "build:lambda": "esbuild src/lambda/ingress.ts src/lambda/worker.ts --bundle --platform=node --target=node22 --format=cjs --external:@aws-sdk/* --sourcemap --outdir=dist-lambda",
+    "test:lambda": "npm run build:lambda && node test/lambda.test.js",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "authorize": "node dist/authorize.js",
     "diagnose": "node dist/diagnose.js",
@@ -13,10 +16,14 @@
     "tmux-bounce": "npm run tmux-stop; sleep 2; npm run tmux-start"
   },
   "dependencies": {
-    "@slack/bolt": "3.17.1"
+    "@slack/bolt": "3.17.1",
+    "@slack/web-api": "6.13.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-lambda": "3.1130.0",
+    "@aws-sdk/client-s3": "3.1130.0",
     "@types/node": "18.19.0",
+    "esbuild": "0.24.2",
     "typescript": "5.3.3"
   }
 }
