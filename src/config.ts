@@ -17,7 +17,10 @@ export const CONFIG_PATH = path.join(CONFIG_DIR, 'config.yaml');
 
 export interface SlackConfig {
   botToken: string; // xoxb-...
-  appToken: string; // xapp-... (Socket Mode)
+  /** xapp-... — only needed for local Socket Mode (`npm start`). */
+  appToken?: string;
+  /** Request signing secret — only needed for HTTP mode (AWS Lambda ingress). */
+  signingSecret?: string;
   /** Optional channel allowlist (comma-separated channel IDs). Empty = all channels. */
   allowedChannels: string[];
 }
@@ -59,11 +62,14 @@ function pick(env: string | undefined, file: string | undefined): string | undef
  * refresh token is fatal — the authorize flow loads config WITHOUT it (since
  * obtaining the refresh token is the whole point), while the bot REQUIRES it.
  */
-export function loadConfig(opts: { requireSpotifyRefresh?: boolean } = {}): Config {
+export function loadConfig(
+  opts: { requireSpotifyRefresh?: boolean; requireAppToken?: boolean } = {}
+): Config {
   const file = readConfigFile();
 
   const botToken = pick(process.env.SLACK_BOT_TOKEN, file.slack_bot_token);
   const appToken = pick(process.env.SLACK_APP_TOKEN, file.slack_app_token);
+  const signingSecret = pick(process.env.SLACK_SIGNING_SECRET, file.slack_signing_secret);
   const clientId = pick(process.env.SPOTIFY_CLIENT_ID, file.spotify_client_id);
   const clientSecret = pick(process.env.SPOTIFY_CLIENT_SECRET, file.spotify_client_secret);
   const redirectUri = pick(process.env.SPOTIFY_REDIRECT_URI, file.spotify_redirect_uri)
@@ -74,7 +80,7 @@ export function loadConfig(opts: { requireSpotifyRefresh?: boolean } = {}): Conf
 
   const missing: string[] = [];
   if (!botToken) missing.push('slack_bot_token (or SLACK_BOT_TOKEN)');
-  if (!appToken) missing.push('slack_app_token (or SLACK_APP_TOKEN)');
+  if (opts.requireAppToken && !appToken) missing.push('slack_app_token (or SLACK_APP_TOKEN)');
   if (!clientId) missing.push('spotify_client_id (or SPOTIFY_CLIENT_ID)');
   if (!clientSecret) missing.push('spotify_client_secret (or SPOTIFY_CLIENT_SECRET)');
   if (opts.requireSpotifyRefresh && !refreshToken) {
@@ -90,7 +96,7 @@ export function loadConfig(opts: { requireSpotifyRefresh?: boolean } = {}): Conf
   }
 
   return {
-    slack: { botToken: botToken!, appToken: appToken!, allowedChannels },
+    slack: { botToken: botToken!, appToken, signingSecret, allowedChannels },
     spotify: { clientId: clientId!, clientSecret: clientSecret!, redirectUri, refreshToken },
   };
 }

@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  friday-jammer on AWS Lambda (Slack HTTP mode). A public ingress function
+  verifies Slack's signature and acks; a private worker does the Spotify work.
+  Build with `npm run build:lambda`, then `sam deploy --guided`.
+
+# Defaults fit the Cloudsoft Training account (TrainingDeveloper SSO role):
+# roles there must sit under /training/ and carry the TrainingDeveloperPolicy
+# boundary, and secrets can't go in SSM Parameter Store or Secrets Manager,
+# so they live in a private S3 bucket instead.
+
+Parameters:
+  ReservedConcurrency:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Cap concurrent executions (ingress 5, worker 2). Set to false on accounts
+      still on the default 10-concurrency quota, which can't reserve any.
+  RolePath:
+    Type: String
+    Default: /training/friday-jammer/
+    Description: IAM path for the functions' roles (must start and end with /).
+  PermissionsBoundaryPolicy:
+    Type: String
+    Default: TrainingDeveloperPolicy
+    Description: >
+      Name of a customer-managed policy in this account to attach to the
+      functions' roles as a permissions boundary. Leave empty for none.
+
+Conditions:
+  UseReservedConcurrency: !Equals [!Ref ReservedConcurrency, 'true']
+  HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundaryPolicy, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    CodeUri: dist-lambda/
+    RolePath: !Ref RolePath
+    PermissionsBoundary: !If
+      - HasPermissionsBoundary
+      - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/${PermissionsBoundaryPolicy}
+      - !Ref AWS::NoValue
+    Tags:
+      app: friday-jammer
+    Environment:
+      Variables:
+        SECRETS_BUCKET: !Ref SecretsBucket
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  WorkerFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-worker
+      Handler: worker.handler
+      Timeout: 60
+      ReservedConcurrentExecutions: !If [UseReservedConcurrency, 2, !Ref AWS::NoValue]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0   # errors are reported in Slack; don't re-run
+      LoggingConfig:
+        LogGroup: !Ref WorkerLogs
+      Environment:
+        Variables:
+          SECRETS_KEY: worker.json
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub ${SecretsBucket.Arn}/worker.json
+
+  IngressFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ingress
+      Handler: ingress.handler
+      Timeout: 5
+      ReservedConcurrentExecutions: !If [UseReservedConcurrency, 5, !Ref AWS::NoValue]
+      FunctionUrlConfig:
+        AuthType: NONE   # Slack can't SigV4-sign; the HMAC signature check is the auth
+      LoggingConfig:
+        LogGroup: !Ref IngressLogs
+      Environment:
+        Variables:
+          SECRETS_KEY: ingress.json
+          WORKER_FN: !Ref WorkerFn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub ${SecretsBucket.Arn}/ingress.json
+        - LambdaInvokePolicy:
+            FunctionName: !Ref WorkerFn
+
+  # Holds two JSON objects: ingress.json (signing secret, channel allowlist)
+  # and worker.json (bot token, Spotify credentials). See README step 3.
+  SecretsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: app
+          Value: friday-jammer
+
+  # Everyone in the account has read access to S3 by default (e.g. through
+  # ReadOnlyAccess), so explicitly deny reading each object to all but the
+  # function that needs it. This stops casual or accidental reads; anyone who
+  # can change the functions or their roles can still get the secrets (see
+  # README, "Shared accounts").
+  SecretsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SecretsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: OnlyWorkerReadsWorkerSecrets
+            Effect: Deny
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${SecretsBucket.Arn}/worker.json
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn: !GetAtt WorkerFnRole.Arn
+          - Sid: OnlyIngressReadsIngressSecrets
+            Effect: Deny
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${SecretsBucket.Arn}/ingress.json
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn: !GetAtt IngressFnRole.Arn
+          - Sid: HttpsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt SecretsBucket.Arn
+              - !Sub ${SecretsBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  # Public function URLs need lambda:InvokeFunction as well as
+  # lambda:InvokeFunctionUrl (which SAM adds). Scoped to URL calls only.
+  IngressUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IngressFn
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
+  WorkerLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-worker
+      RetentionInDays: 14
+      Tags:
+        - Key: app
+          Value: friday-jammer
+
+  IngressLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-ingress
+      RetentionInDays: 14
+      Tags:
+        - Key: app
+          Value: friday-jammer
+
+Outputs:
+  SecretsBucket:
+    Description: Bucket to upload ingress.json and worker.json to (README step 3).
+    Value: !Ref SecretsBucket
+  SlackRequestUrl:
+    Description: Paste into the Slack app as the Events request URL and the slash command URL.
+    Value: !GetAtt IngressFnUrl.FunctionUrl

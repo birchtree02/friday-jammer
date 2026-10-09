@@ -1,0 +1,37 @@
+# friday-jammer Slack app manifest — HTTP mode, for the AWS Lambda deployment.
+# Replace both REQUEST_URL placeholders with the `SlackRequestUrl` output from
+# `sam deploy` (the Lambda Function URL), then paste this at
+# https://api.slack.com/apps → your app → App Manifest.
+#
+# For local Socket Mode use slack-app-manifest.yaml instead. HTTP mode needs the
+# app's Signing Secret (Basic Information → App Credentials), not an xapp- token.
+display_information:
+  name: friday-jammer
+  description: Adds Spotify track links shared in a thread to a collaborative playlist.
+  background_color: "#1db954"
+features:
+  bot_user:
+    display_name: friday-jammer
+    always_online: true
+  slash_commands:
+    - command: /friday-jammer
+      url: REQUEST_URL
+      description: Add Spotify track links from this thread to a collaborative playlist
+      usage_hint: "[playlist-link]"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - app_mentions:read
+      - channels:history
+      - groups:history
+      - chat:write
+settings:
+  event_subscriptions:
+    request_url: REQUEST_URL
+    bot_events:
+      - app_mention
+  socket_mode_enabled: false
+  org_deploy_enabled: false
+  token_rotation_enabled: false

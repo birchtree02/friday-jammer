@@ -1,6 +1,7 @@
 import { App } from '@slack/bolt';
 import { loadConfig } from './config';
 import { runJam, JamRequest } from './handler';
+import { fetchThread } from './slack/thread';
 
 /**
  * friday-jammer — a Slack bot (Socket Mode, runs locally) that adds the Spotify
@@ -17,48 +18,17 @@ import { runJam, JamRequest } from './handler';
  * retry-on-start loop.
  */
 
-const config = loadConfig({ requireSpotifyRefresh: true });
+const config = loadConfig({ requireSpotifyRefresh: true, requireAppToken: true });
 
 const app = new App({
   token: config.slack.botToken,
-  appToken: config.slack.appToken,
+  appToken: config.slack.appToken!,
   socketMode: true,
 });
 
 function channelAllowed(channelId: string): boolean {
   const allow = config.slack.allowedChannels;
   return allow.length === 0 || allow.includes(channelId);
-}
-
-/**
- * Fetch every message in a thread, returning their raw texts plus the root text.
- * Uses conversations.replies to pull the full thread history.
- */
-async function fetchThread(
-  client: any,
-  channel: string,
-  threadTs: string
-): Promise<{ rootText: string; threadTexts: string[] }> {
-  const texts: string[] = [];
-  let cursor: string | undefined;
-  let rootText = '';
-
-  do {
-    const res: any = await client.conversations.replies({
-      channel,
-      ts: threadTs,
-      limit: 200,
-      cursor,
-    });
-    for (const m of res.messages || []) {
-      const text = m.text || '';
-      texts.push(text);
-      if (m.ts === threadTs) rootText = text;
-    }
-    cursor = res.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-
-  return { rootText, threadTexts: texts };
 }
 
 // --- Slash command: /friday-jammer [playlist-link] ---
